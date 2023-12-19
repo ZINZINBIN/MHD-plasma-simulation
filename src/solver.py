@@ -13,9 +13,9 @@ class Solver:
         t_end: float,
         L: float = 1.0,
         is_constraint_slope: bool = True,
-        is_animated:bool = False,
+        is_animated: bool = False,
         verbose: int = 50,
-        save_dir:Optional[str] = "./results/",
+        save_dir: Optional[str] = "./results/",
     ):
         # grid configuration
         self.nx = nx
@@ -26,7 +26,7 @@ class Solver:
 
         # Setting
         self.is_constraint_slope = is_constraint_slope
-        self.courant_factor = 0.25
+        self.courant_factor = 0.64
         self.verbose = verbose
         self.save_dir = save_dir
         self.is_animated = is_animated
@@ -57,10 +57,14 @@ class Solver:
         self.vS = np.zeros((nx, ny), dtype=np.float32)
 
         self.set_init_condition()
-        
+
     def set_init_condition(self):
         # Orszag-Tang vortex condition
-        Y, X = np.meshgrid(self.nx, self.ny)
+
+        xlin = np.linspace(0.5 * self.dx, self.L - 0.5 * self.dx, self.nx)
+        ylin = np.linspace(0.5 * self.dx, self.L - 0.5 * self.dx, self.ny)
+        
+        X,Y = np.meshgrid(xlin, ylin)
 
         self.X = X
         self.Y = Y
@@ -70,25 +74,22 @@ class Solver:
         self.rho = (self.gamma**2 / (4 * np.pi)) * np.ones_like(X)
         self.P = (self.gamma / (4 * np.pi)) * np.ones_like(X)
 
-        Az = np.cos(4 * np.pi * X) / (4 * np.pi * np.sqrt(4 * np.pi)) + np.cos(
-            2 * np.pi * Y
-        ) / (2 * np.pi * np.sqrt(4 * np.pi))
+        Az = np.cos(4 * np.pi * X) / (4 * np.pi * np.sqrt(4 * np.pi)) + np.cos(2 * np.pi * Y) / (2 * np.pi * np.sqrt(4 * np.pi))
         Bx, By = compute_curl_z(Az, self.dx)
 
         self.Bx = Bx
         self.By = By
 
         self.Pt = self.P + 0.5 * (Bx**2 + By**2)
-        
         self.internal_energy = self.P / (self.gamma - 1) / self.rho
-        self.total_energy = self.internal_energy + 0.5 * (self.vx ** 2 + self.vy ** 2) + 0.5 * (self.Bx ** 2 + self.By ** 2) / self.rho
+        self.total_energy = self.P / (self.gamma - 1) / self.rho + 0.5 * (self.vx**2 + self.vy**2) + 0.5 * (self.Bx**2 + self.By**2) / self.rho
 
     def compute_Alfven_speed(self, rho, Bx, By):
-        self.vA = np.sqrt((Bx**2 + By**2) / (2 * self.mu * rho))
+        self.vA = np.sqrt((Bx**2 + By**2) / (2 * rho))
         return self.vA
 
     def compute_sound_speed(self, rho, Bx, By, P):
-        self.vS = np.sqrt(self.gamma * (P - (Bx**2 + By**2) / (2 * self.mu)) / rho)
+        self.vS = np.sqrt(self.gamma * P / rho)
         return self.vS
 
     def compute_fast_magnetosonic_speed(self, vS, vA):
@@ -154,12 +155,11 @@ class Solver:
         self.dt = self.courant_factor * np.min(
             self.dx / (vF + np.sqrt(self.vx**2 + self.vy**2))
         )
-
+        
         print(
             "# Constraint Transport Solver: Iteration for solving MHD tranport equation"
         )
         while t < self.t_end:
-            
             # Runge-Kutta method 4th order
             rho_k1, vx_k1, vy_k1, Bx_k1, By_k1, P_k1 = self.compute_RK_partial(
                 self.rho, self.vx, self.vy, self.Bx, self.By, self.P
@@ -207,17 +207,46 @@ class Solver:
             self.dt = self.courant_factor * np.min(
                 self.dx / (vF + np.sqrt(self.vx**2 + self.vy**2))
             )
-            
+
             # update macroscopic variables
-            self.Pt = self.P + 0.5 * (Bx**2 + By**2)
+            self.Pt = self.P + 0.5 * (self.Bx**2 + self.By**2)
             self.internal_energy = self.P / (self.gamma - 1) / self.rho
-            self.total_energy = self.internal_energy + 0.5 * (self.vx ** 2 + self.vy ** 2) + 0.5 * (self.Bx ** 2 + self.By ** 2) / self.rho
+            self.total_energy = (
+                self.internal_energy
+                + 0.5 * (self.vx**2 + self.vy**2)
+                + 0.5 * (self.Bx**2 + self.By**2) / self.rho
+            )
 
             if count % self.verbose == 0:
-                divB = compute_div(self.Bx, self.By, d)
-                print("(Solver) t = {:.3f} | mean divB = {:.3f}".format(self.t, np.mean(np.abs(divB))))
-                
+                divB = compute_div(self.Bx, self.By, self.dx)
+                print(
+                    "(Solver) t = {:.3f} | mean divB = {:.3f}".format(
+                        t, np.mean(np.abs(divB))
+                    )
+                )
+
             # update count
             count += 1
 
         print("# Constraint Transport Solver: Iteration process complete")
+        
+        # save figure
+        if not os.path.exists(self.save_dir):
+            os.mkdir(self.save_dir)
+        
+        self.plot_contourf(
+            self.Pt,
+            title="Total pressure",
+            save_path=os.path.join(self.save_dir, "pressure.png"),
+        )
+
+    def plot_contourf(self, vector, title: str, save_path: str):
+        cbar = np.linspace(np.min(vector), np.max(vector), num=64)
+        plt.figure(figsize=(6, 4), dpi=160)
+        plt.contourf(self.X, self.Y, vector, cbar)
+        plt.xlabel("x")
+        plt.ylabel("y")
+        plt.colorbar()
+        plt.title(title)
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=160)

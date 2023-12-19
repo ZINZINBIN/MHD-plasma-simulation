@@ -11,7 +11,7 @@ def parsing():
     parser.add_argument("--use_animation", type=bool, default=True)
     parser.add_argument("--verbose", type=int, default=16)
     parser.add_argument("--plot_freq", type=int, default=10)
-    parser.add_argument("--save_dir", type=str, default="./result/")
+    parser.add_argument("--save_dir", type=str, default="./results/")
     args = vars(parser.parse_args())
     return args
 
@@ -21,13 +21,13 @@ if __name__ == "__main__":
     solver = Solver(
         nx = args['num_mesh'],
         ny = args['num_mesh'],
-        t_srt = args['t_srt'],,
+        t_srt = args['t_srt'],
         t_end = args['t_end'],
-        L = args['L']
+        L = args['L'],
         is_constraint_slope = args['use_constraint_slope'],
-        is_animated:bool = args['use_animation'],
+        is_animated = args['use_animation'],
         verbose = args['verbose'],
-        save_dir:Optional[str] = args['save_dir']
+        save_dir = args['save_dir']
     )
     
     solver.solve()
