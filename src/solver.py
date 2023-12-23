@@ -61,10 +61,9 @@ class Solver:
     def set_init_condition(self):
         # Orszag-Tang vortex condition
 
-        xlin = np.linspace(0.5 * self.dx, self.L - 0.5 * self.dx, self.nx)
-        ylin = np.linspace(0.5 * self.dx, self.L - 0.5 * self.dx, self.ny)
+        lin = np.linspace(0.5 * self.dx, self.L - 0.5 * self.dx, self.nx)
         
-        X,Y = np.meshgrid(xlin, ylin)
+        Y,X = np.meshgrid(lin, lin)
 
         self.X = X
         self.Y = Y
@@ -95,6 +94,15 @@ class Solver:
     def compute_fast_magnetosonic_speed(self, vS, vA):
         self.vF = np.sqrt((vS**2 + vA**2 + np.sqrt(vS**2 + vA**2) ** 2) / 2)
         return self.vF
+    
+    def compute_total_energy(self, rho, vx, vy, Bx, By, P):
+        self.total_energy = P / (self.gamma - 1) / rho + 0.5 * (vx ** 2 + vy ** 2) + 0.5 * (Bx ** 2 + By ** 2) / rho
+        return self.total_energy
+    
+    def compute_pressure(self, rho, vx, vy, Bx, By, te):
+        P = te - 0.5 * (vx ** 2 + vy ** 2) + 0.5 * (Bx ** 2 + By ** 2) / rho
+        self.P = P * (self.gamma - 1) * rho
+        return self.P
 
     def compute_RK_partial(
         self,
@@ -121,23 +129,72 @@ class Solver:
             P_dx, P_dy = constraint_slope(P, self.dx, P_dx, P_dy)
 
         drho = (-1) * (vx * rho_dx + vy * rho_dy + rho * vx_dx + rho * vy_dy)
+        
+        # div B used for convergence
+        # JxB -> B*dB - d(0.5 * B**2)
+        
         dvx = (-1) * (
-            vx * vx_dx + vy * vx_dy - 1 / 4 / np.pi * By * (Bx_dy - By_dx) + P_dx
+            vx * vx_dx + vy * vx_dy - 1 / 4 / np.pi / rho * By * (Bx_dy - By_dx) + P_dx / rho
         )
         dvy = (-1) * (
-            vx * vy_dx + vy * vy_dy - 1 / 4 / np.pi * By * (By_dx - Bx_dy) + P_dy
+            vx * vy_dx + vy * vy_dy - 1 / 4 / np.pi / rho * Bx * (By_dx - Bx_dy) + P_dy / rho
         )
         dBx = (-1) * (
-            vx * Bx_dx + vy * Bx_dy + Bx * (vx_dx + vy_dy) - Bx * vx_dx - By * vx_dy
+            vx * By_dy * (-1) + vy * Bx_dy + Bx * (vx_dx + vy_dy) - Bx * vx_dx - By * vx_dy
         )
         dBy = (-1) * (
-            vx * By_dx + vy * By_dy + By * (vx_dx + vy_dy) - Bx * vy_dx - By * vy_dy
+            vx * By_dx + vy * Bx_dx * (-1) + By * (vx_dx + vy_dy) - Bx * vy_dx - By * vy_dy
         )
+        
         dP = (-1) * (
             vx * P_dx + vy * P_dy + self.gamma * P * vx_dx + self.gamma * P * vy_dy
         )
 
         return drho, dvx, dvy, dBx, dBy, dP
+    
+    def update_variables(self, rho, vx, vy, Bx, By, P, dt):
+        
+        # Runge-Kutta method 4th order
+        rho_k1, vx_k1, vy_k1, Bx_k1, By_k1, P_k1 = self.compute_RK_partial(
+            rho, vx, vy, Bx, By, P
+        )
+
+        rho_k2, vx_k2, vy_k2, Bx_k2, By_k2, P_k2 = self.compute_RK_partial(
+            rho + 0.5 * dt * rho_k1,
+            vx + 0.5 * dt * vx_k1,
+            vy + 0.5 * dt * vy_k1,
+            Bx + 0.5 * dt * Bx_k1,
+            By + 0.5 * dt * By_k1,
+            P + 0.5 * dt * P_k1,
+        )
+
+        rho_k3, vx_k3, vy_k3, Bx_k3, By_k3, P_k3 = self.compute_RK_partial(
+            rho + 0.5 * dt * rho_k2,
+            vx + 0.5 * dt * vx_k2,
+            vy + 0.5 * dt * vy_k2,
+            Bx + 0.5 * dt * Bx_k2,
+            By + 0.5 * dt * By_k2,
+            P + 0.5 * dt * P_k2,
+        )
+
+        rho_k4, vx_k4, vy_k4, Bx_k4, By_k4, P_k4 = self.compute_RK_partial(
+            rho + dt * rho_k3,
+            vx + dt * vx_k3,
+            vy + dt * vy_k3,
+            Bx + dt * Bx_k3,
+            By + dt * By_k3,
+            P + dt * P_k3,
+        )
+
+        # update physical variables
+        rho_new = rho + dt * (1 / 6) * (rho_k1 + 2 * rho_k2 + 2 * rho_k3 + rho_k4)
+        vx_new = vx + dt * (1 / 6) * (vx_k1 + 2 * vx_k2 + 2 * vx_k3 + vx_k4)
+        vy_new = vy + dt * (1 / 6) * (vy_k1 + 2 * vy_k2 + 2 * vy_k3 + vy_k4)
+        Bx_new = Bx + dt * (1 / 6) * (Bx_k1 + 2 * Bx_k2 + 2 * Bx_k3 + Bx_k4)
+        By_new = By + dt * (1 / 6) * (By_k1 + 2 * By_k2 + 2 * By_k3 + By_k4)
+        P_new = P + dt * (1 / 6) * (P_k1 + 2 * P_k2 + 2 * P_k3 + P_k4)
+        
+        return rho_new, vx_new, vy_new, Bx_new, By_new, P_new
 
     def solve(self):
         t = 0
@@ -147,66 +204,35 @@ class Solver:
         print("======================================================================")
         print("# Constraint Transport Solver: Initialize Orszag-Tang vortex condition")
         self.set_init_condition()
-
-        vA = self.compute_Alfven_speed(self.rho, self.Bx, self.By)
-        vS = self.compute_sound_speed(self.rho, self.Bx, self.By, self.P)
-        vF = self.compute_fast_magnetosonic_speed(vS, vA)
-
-        self.dt = self.courant_factor * np.min(
-            self.dx / (vF + np.sqrt(self.vx**2 + self.vy**2))
-        )
         
         print(
             "# Constraint Transport Solver: Iteration for solving MHD tranport equation"
         )
+        
         while t < self.t_end:
-            # Runge-Kutta method 4th order
-            rho_k1, vx_k1, vy_k1, Bx_k1, By_k1, P_k1 = self.compute_RK_partial(
-                self.rho, self.vx, self.vy, self.Bx, self.By, self.P
-            )
-
-            rho_k2, vx_k2, vy_k2, Bx_k2, By_k2, P_k2 = self.compute_RK_partial(
-                self.rho + 0.5 * self.dt * rho_k1,
-                self.vx + 0.5 * self.dt * vx_k1,
-                self.vy + 0.5 * self.dt * vy_k1,
-                self.Bx + 0.5 * self.dt * Bx_k1,
-                self.By + 0.5 * self.dt * By_k1,
-                self.P + 0.5 * self.dt * P_k1,
-            )
-
-            rho_k3, vx_k3, vy_k3, Bx_k3, By_k3, P_k3 = self.compute_RK_partial(
-                self.rho + 0.5 * self.dt * rho_k2,
-                self.vx + 0.5 * self.dt * vx_k2,
-                self.vy + 0.5 * self.dt * vy_k2,
-                self.Bx + 0.5 * self.dt * Bx_k2,
-                self.By + 0.5 * self.dt * By_k2,
-                self.P + 0.5 * self.dt * P_k2,
-            )
-
-            rho_k4, vx_k4, vy_k4, Bx_k4, By_k4, P_k4 = self.compute_RK_partial(
-                self.rho + self.dt * rho_k3,
-                self.vx + self.dt * vx_k3,
-                self.vy + self.dt * vy_k3,
-                self.Bx + self.dt * Bx_k3,
-                self.By + self.dt * By_k3,
-                self.P + self.dt * P_k3,
-            )
-
-            # update physical variables
-            self.rho += self.dt * (1 / 6) * (rho_k1 + 2 * rho_k2 + 2 * rho_k3 + rho_k4)
-            self.vx += self.dt * (1 / 6) * (vx_k1 + 2 * vx_k2 + 2 * vx_k3 + vx_k4)
-            self.vy += self.dt * (1 / 6) * (vy_k1 + 2 * vy_k2 + 2 * vy_k3 + vy_k4)
-            self.Bx += self.dt * (1 / 6) * (Bx_k1 + 2 * Bx_k2 + 2 * Bx_k3 + Bx_k4)
-            self.By += self.dt * (1 / 6) * (By_k1 + 2 * By_k2 + 2 * By_k3 + By_k4)
-            self.P += self.dt * (1 / 6) * (P_k1 + 2 * P_k2 + 2 * P_k3 + P_k4)
-
-            # update time
-            t += self.dt
-
+            
+            # compute Alfven speed, sound speed, and fast magnetosonic speed
+            vA = self.compute_Alfven_speed(self.rho, self.Bx, self.By)
+            vS = self.compute_sound_speed(self.rho, self.Bx, self.By, self.P)
+            vF = self.compute_fast_magnetosonic_speed(vS, vA)
+            
             # update time interval
             self.dt = self.courant_factor * np.min(
                 self.dx / (vF + np.sqrt(self.vx**2 + self.vy**2))
             )
+            
+            # update physical variables
+            rho_new, vx_new, vy_new, Bx_new, By_new, P_new = self.update_variables(self.rho, self.vx, self.vy, self.Bx, self.By, self.P, self.dt)
+            
+            self.rho = rho_new
+            self.vx = vx_new
+            self.vy = vy_new
+            self.Bx = Bx_new
+            self.By = By_new
+            self.P = P_new
+
+            # update time
+            t += self.dt
 
             # update macroscopic variables
             self.Pt = self.P + 0.5 * (self.Bx**2 + self.By**2)
@@ -239,9 +265,45 @@ class Solver:
             title="Total pressure",
             save_path=os.path.join(self.save_dir, "pressure.png"),
         )
+        
+        self.plot_contourf(
+            self.total_energy,
+            title="Total energy",
+            save_path=os.path.join(self.save_dir, "energy.png"),
+        )
+        
+        self.plot_contourf(
+            self.internal_energy,
+            title="Internal energy",
+            save_path=os.path.join(self.save_dir, "energy_internal.png"),
+        )
+        
+        self.plot_contourf(
+            self.rho,
+            title="Plasma density",
+            save_path=os.path.join(self.save_dir, "density.png"),
+        )
+        
+        self.plot_contourf(
+            self.vx,
+            title="Vx",
+            save_path=os.path.join(self.save_dir, "vx.png"),
+        )
+        
+        self.plot_contourf(
+            self.vy,
+            title="Vy",
+            save_path=os.path.join(self.save_dir, "vy.png"),
+        )
+        
+        self.plot_contourf(
+            0.5*(self.Bx ** 2 + self.By ** 2),
+            title="Magnetic pressure",
+            save_path=os.path.join(self.save_dir, "pressure_magnetic.png"),
+        )
 
     def plot_contourf(self, vector, title: str, save_path: str):
-        cbar = np.linspace(np.min(vector), np.max(vector), num=64)
+        cbar = np.linspace(np.min(vector), np.max(vector), num=128)
         plt.figure(figsize=(6, 4), dpi=160)
         plt.contourf(self.X, self.Y, vector, cbar)
         plt.xlabel("x")

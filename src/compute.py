@@ -1,30 +1,29 @@
 import numpy as np
 from typing import Optional
 
-
 def compute_gradient(A: np.ndarray, d: float):
     Ax = (np.roll(A, -1, 0) - np.roll(A, 1, 0)) / (2 * d)
     Ay = (np.roll(A, -1, 1) - np.roll(A, 1, 1)) / (2 * d)
 
-    Ax[0, :] = (A - np.roll(A, 1, 0))[0,:] / d
-    Ax[-1, :] = (np.roll(A, -1, 0) - A)[-1,:] / d
+    Ax[0, :] = (np.roll(A, -1, 0) - A)[0,:] / d # (A - np.roll(A, 1, 0))[0,:] / d
+    Ax[-1, :] = (A - np.roll(A, 1, 0))[-1,:] / d # (np.roll(A, -1, 0) - A)[-1,:] / d
 
-    Ay[:, 0] = (A - np.roll(A, 1, 1))[:,0] / d
-    Ay[:, -1] = (np.roll(A, -1, 1) - A)[:,-1] / d
+    Ay[:, 0] = (np.roll(A, -1, 1) - A)[:,0] / d # (A - np.roll(A, 1, 1))[:,0] / d
+    Ay[:, -1] = (A - np.roll(A, 1, 1))[:,-1] / d # (np.roll(A, -1, 1) - A)[:,-1] / d
+    
     return Ax, Ay
 
 def compute_curl_z(A: np.ndarray, d: float):
     Bx = (np.roll(A, -1, 1) - np.roll(A, 1, 1)) / (2 * d)
     By = (-1) * (np.roll(A, -1, 0) - np.roll(A, 1, 0)) / (2 * d)
 
-    Bx[0,:] = (A - np.roll(A, 1, 1))[0,:] / d
-    Bx[-1,:] = (np.roll(A, -1, 1) - A)[-1,:] / d
+    Bx[:,0] = (np.roll(A, -1, 1) - A)[:,0] / d # (A - np.roll(A, 1, 1))[0,:] / d
+    Bx[:,-1] = (A - np.roll(A, 1, 1))[:,-1] / d # (np.roll(A, -1, 1) - A)[-1,:] / d
 
-    By[:,0] = (-1) * (A - np.roll(A, 1, 0))[:,0] / d
-    By[:,-1] = (-1) * (np.roll(A, -1, 0) - A)[:,-1] / d
-
+    By[0,:] = (-1) * (np.roll(A, -1, 0) - A)[0,:] / d # (-1) * (A - np.roll(A, 1, 0))[:,0] / d
+    By[-1,:] = (-1) * (A - np.roll(A, 1, 0))[-1,:] / d # (-1) * (np.roll(A, -1, 0) - A)[:,-1] / d
+    
     return Bx, By
-
 
 def compute_div(Ax: np.ndarray, Ay: np.ndarray, d: float):
     R = -1
@@ -34,7 +33,6 @@ def compute_div(Ax: np.ndarray, Ay: np.ndarray, d: float):
     )
     div_A /= 2 * d
     return div_A
-
 
 def extrapolate_space(
     A: np.ndarray,
@@ -56,7 +54,6 @@ def extrapolate_space(
 
     return Ax_l, Ax_r, Ay_l, Ay_r
 
-
 def constraint_slope(A: np.ndarray, d: float, Ax: np.ndarray, Ay: np.ndarray):
     R = -1
     L = 1
@@ -73,7 +70,7 @@ def constraint_slope(A: np.ndarray, d: float, Ax: np.ndarray, Ay: np.ndarray):
         np.maximum(
             0,
             np.minimum(
-                1, ((A - np.roll(A, R, axis=0)) / d) / (Ax + 1.0e-8 * (Ax == 0))
+                1, (-1) * ((A - np.roll(A, R, axis=0)) / d) / (Ax + 1.0e-8 * (Ax == 0))
             ),
         )
         * Ax
@@ -91,7 +88,7 @@ def constraint_slope(A: np.ndarray, d: float, Ax: np.ndarray, Ay: np.ndarray):
         np.maximum(
             0,
             np.minimum(
-                1, ((A - np.roll(A, R, axis=1)) / d) / (Ay + 1.0e-8 * (Ay == 0))
+                1, (-1) * ((A - np.roll(A, R, axis=1)) / d) / (Ay + 1.0e-8 * (Ay == 0))
             ),
         )
         * Ay
