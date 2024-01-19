@@ -13,24 +13,27 @@ def compute_gradient(A: np.ndarray, d: float):
     
     return Ax, Ay
 
+def compute_avg_field(Ax:np.ndarray, Ay:np.ndarray):	
+	Ax_avg = 0.5 * (Ax+np.roll(Ax,1,axis=0)) 
+	Ay_avg = 0.5 * (Ay+np.roll(Ay,1,axis=1)) 
+	return Ax_avg, Ay_avg
+
 def compute_curl_z(A: np.ndarray, d: float):
-    Bx = (np.roll(A, -1, 1) - np.roll(A, 1, 1)) / (2 * d)
-    By = (-1) * (np.roll(A, -1, 0) - np.roll(A, 1, 0)) / (2 * d)
+    Bx = (np.roll(A, -1, axis = 1) - np.roll(A, 1, axis = 1)) / (2 * d)
+    By = (-1) * (np.roll(A, -1, axis = 0) - np.roll(A, 1, axis = 0)) / (2 * d)
 
-    Bx[:,0] = (np.roll(A, -1, 1) - A)[:,0] / d # (A - np.roll(A, 1, 1))[0,:] / d
-    Bx[:,-1] = (A - np.roll(A, 1, 1))[:,-1] / d # (np.roll(A, -1, 1) - A)[-1,:] / d
+    Bx[:,0] = (np.roll(A, -1, axis = 1) - A)[:,0] / d # (A - np.roll(A, 1, 1))[0,:] / d
+    Bx[:,-1] = (A - np.roll(A, 1, axis = 1))[:,-1] / d # (np.roll(A, -1, 1) - A)[-1,:] / d
 
-    By[0,:] = (-1) * (np.roll(A, -1, 0) - A)[0,:] / d # (-1) * (A - np.roll(A, 1, 0))[:,0] / d
-    By[-1,:] = (-1) * (A - np.roll(A, 1, 0))[-1,:] / d # (-1) * (np.roll(A, -1, 0) - A)[:,-1] / d
+    By[0,:] = (-1) * (np.roll(A, -1, axis = 0) - A)[0,:] / d # (-1) * (A - np.roll(A, 1, 0))[:,0] / d
+    By[-1,:] = (-1) * (A - np.roll(A, 1, axis = 0))[-1,:] / d # (-1) * (np.roll(A, -1, 0) - A)[:,-1] / d
     
     return Bx, By
 
 def compute_div(Ax: np.ndarray, Ay: np.ndarray, d: float):
     R = -1
     L = 1
-    div_A = (
-        np.roll(Ax, R, 0) - np.roll(Ax, L, 0) + np.roll(Ay, R, 1) - np.roll(Ay, L, 1)
-    )
+    div_A = np.roll(Ax, R, axis = 0) - np.roll(Ax, L, axis = 0) + np.roll(Ay, R, axis = 1) - np.roll(Ay, L, axis = 1)
     div_A /= 2 * d
     return div_A
 

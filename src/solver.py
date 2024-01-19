@@ -26,7 +26,7 @@ class Solver:
 
         # Setting
         self.is_constraint_slope = is_constraint_slope
-        self.courant_factor = 0.64
+        self.courant_factor = 0.1
         self.verbose = verbose
         self.save_dir = save_dir
         self.is_animated = is_animated
@@ -34,20 +34,25 @@ class Solver:
         self.t_srt = t_srt
         self.t_end = t_end
 
-        # physical variables
+        # Physical variables
         self.rho = np.zeros((nx, ny), dtype=np.float32)
         self.vx = np.zeros((nx, ny), dtype=np.float32)
         self.vy = np.zeros((nx, ny), dtype=np.float32)
         self.P = np.zeros((nx, ny), dtype=np.float32)
         self.Pt = np.zeros((nx, ny), dtype=np.float32)
-
         self.Bx = np.zeros((nx, ny), dtype=np.float32)
         self.By = np.zeros((nx, ny), dtype=np.float32)
+        
         self.Ez = np.zeros((nx, ny), dtype=np.float32)
-
+        self.Bxh = np.zeros((nx, ny), dtype=np.float32)
+        self.Byh = np.zeros((nx, ny), dtype=np.float32)
+        
+        # Conserved quantities
+        self.m = np.zeros((nx, ny), dtype=np.float32)
+        self.px = np.zeros((nx, ny), dtype=np.float32)
+        self.py = np.zeros((nx, ny), dtype=np.float32)
         self.total_energy = np.zeros((nx, ny), dtype=np.float32)
         self.internal_energy = np.zeros((nx, ny), dtype=np.float32)
-        self.psi = np.zeros((nx, ny), dtype=np.float32)
 
         # physical constraint
         self.mu = math.pi * 4 * 10 ** (-7)
@@ -60,7 +65,6 @@ class Solver:
 
     def set_init_condition(self):
         # Orszag-Tang vortex condition
-
         lin = np.linspace(0.5 * self.dx, self.L - 0.5 * self.dx, self.nx)
         
         Y,X = np.meshgrid(lin, lin)
@@ -74,8 +78,13 @@ class Solver:
         self.P = (self.gamma / (4 * np.pi)) * np.ones_like(X)
 
         Az = np.cos(4 * np.pi * X) / (4 * np.pi * np.sqrt(4 * np.pi)) + np.cos(2 * np.pi * Y) / (2 * np.pi * np.sqrt(4 * np.pi))
-        Bx, By = compute_curl_z(Az, self.dx)
+        Bxh, Byh = compute_curl_z(Az, self.dx)
 
+        self.Bxh = Bxh
+        self.Byh = Byh
+        
+        Bx, By = compute_avg_field(Bxh, Byh)
+        
         self.Bx = Bx
         self.By = By
 
@@ -83,8 +92,12 @@ class Solver:
         self.internal_energy = self.P / (self.gamma - 1) / self.rho
         self.total_energy = self.P / (self.gamma - 1) / self.rho + 0.5 * (self.vx**2 + self.vy**2) + 0.5 * (self.Bx**2 + self.By**2) / self.rho
 
+        self.m = self.rho * self.dx ** 2
+        self.px = self.rho * self.vx * self.dx ** 2
+        self.py = self.rho * self.vy * self.dx ** 2
+        
     def compute_Alfven_speed(self, rho, Bx, By):
-        self.vA = np.sqrt((Bx**2 + By**2) / (2 * rho))
+        self.vA = np.sqrt((Bx**2 + By**2) / rho)
         return self.vA
 
     def compute_sound_speed(self, rho, Bx, By, P):
@@ -98,6 +111,10 @@ class Solver:
     def compute_total_energy(self, rho, vx, vy, Bx, By, P):
         self.total_energy = P / (self.gamma - 1) / rho + 0.5 * (vx ** 2 + vy ** 2) + 0.5 * (Bx ** 2 + By ** 2) / rho
         return self.total_energy
+    
+    def compute_internal_energy(self, rho, P):
+        self.internal_energy = P / rho / (self.gamma - 1)
+        return self.internal_energy
     
     def compute_pressure(self, rho, vx, vy, Bx, By, te):
         P = te - 0.5 * (vx ** 2 + vy ** 2) + 0.5 * (Bx ** 2 + By ** 2) / rho
@@ -149,10 +166,10 @@ class Solver:
         dP = (-1) * (
             vx * P_dx + vy * P_dy + self.gamma * P * vx_dx + self.gamma * P * vy_dy
         )
-
+               
         return drho, dvx, dvy, dBx, dBy, dP
     
-    def update_variables(self, rho, vx, vy, Bx, By, P, dt):
+    def extrapolate_half_time(self, rho, vx, vy, Bx, By, P, dt):
         
         # Runge-Kutta method 4th order
         rho_k1, vx_k1, vy_k1, Bx_k1, By_k1, P_k1 = self.compute_RK_partial(
@@ -192,9 +209,71 @@ class Solver:
         vy_new = vy + dt * (1 / 6) * (vy_k1 + 2 * vy_k2 + 2 * vy_k3 + vy_k4)
         Bx_new = Bx + dt * (1 / 6) * (Bx_k1 + 2 * Bx_k2 + 2 * Bx_k3 + Bx_k4)
         By_new = By + dt * (1 / 6) * (By_k1 + 2 * By_k2 + 2 * By_k3 + By_k4)
-        P_new = P + dt * (1 / 6) * (P_k1 + 2 * P_k2 + 2 * P_k3 + P_k4)
+        P_new = (P + dt * (1 / 6) * (P_k1 + 2 * P_k2 + 2 * P_k3 + P_k4)).clip(0)
         
         return rho_new, vx_new, vy_new, Bx_new, By_new, P_new
+
+    def compute_Flux(self, rho_L, rho_R, vx_L, vx_R, vy_L, vy_R, P_L, P_R, Bx_L, Bx_R, By_L, By_R):
+        
+        en_L = P_L / (self.gamma - 1) / rho_L + 0.5 * (vx_L ** 2 + vy_L ** 2) + 0.5 * (Bx_L ** 2 + By_L ** 2) / rho_L
+        en_R = P_R / (self.gamma - 1) / rho_R + 0.5 * (vx_R ** 2 + vy_R ** 2) + 0.5 * (Bx_R ** 2 + By_R ** 2) / rho_R
+        
+        rho_avg  = 0.5*(rho_L + rho_R)
+        momx_avg = 0.5*(rho_L * vx_L + rho_R * vx_R)
+        momy_avg = 0.5*(rho_L * vy_L + rho_R * vy_R)
+        en_avg   = 0.5*(en_L + en_R)
+        Bx_avg   = 0.5*(Bx_L + Bx_R)
+        By_avg   = 0.5*(By_L + By_R)
+        P_avg    = 0.5 * (P_L + P_R)
+        
+        # compute flux of physical quantities
+        flux_m = momx_avg
+        flux_px = momx_avg ** 2 / rho_avg + P_avg + 0.5 * (Bx_avg ** 2 + By_avg ** 2) - Bx_avg ** 2
+        flux_py = momx_avg * momy_avg / rho_avg - Bx_avg * By_avg
+        flux_en = (en_avg + P_avg + 0.5 * (Bx_avg ** 2 + By_avg ** 2)) * momx_avg / rho_avg - Bx_avg * (Bx_avg * momx_avg + By_avg * momy_avg) / rho_avg
+        flux_By = (By_avg * momx_avg - Bx_avg * momy_avg) / rho_avg
+        
+        # compute wave speeds   
+        c0_L = np.sqrt(self.gamma*(P_L/rho_L))
+        c0_R = np.sqrt(self.gamma*(P_R/rho_R))
+        
+        ca_L = np.sqrt((Bx_L**2+By_L**2)/rho_L)
+        ca_R = np.sqrt((Bx_R**2+By_R**2)/rho_R)
+        cf_L = np.sqrt(0.5*(c0_L**2+ca_L**2) + 0.5*np.sqrt((c0_L**2+ca_L**2)**2) )
+        cf_R = np.sqrt(0.5*(c0_R**2+ca_R**2) + 0.5*np.sqrt((c0_R**2+ca_R**2)**2) )
+        C_L = cf_L+ np.abs(vx_L)
+        C_R = cf_R + np.abs(vx_R)
+        C = np.maximum(C_L, C_R)
+	
+        # add stabilizing diffusive term
+        flux_m -= C * 0.5 * (rho_L - rho_R)
+        flux_px -= C * 0.5 * (rho_L * vx_L - rho_R * vx_R)
+        flux_py -= C * 0.5 * (rho_L * vy_L - rho_R * vy_R)
+        flux_en -= C * 0.5 * ( en_L - en_R )
+        flux_By -= C * 0.5 * ( By_L - By_R )
+        
+        return flux_m, flux_px, flux_py, flux_en, flux_By
+    
+    def update_variables_by_flux(self, F:np.ndarray, flux_F_X:np.ndarray, flux_F_Y:np.ndarray, dx:float, dt:float):
+        F += - dt * dx * flux_F_X
+        F +=   dt * dx * np.roll(flux_F_X,1,axis=0)
+        F += - dt * dx * flux_F_Y
+        F +=   dt * dx * np.roll(flux_F_Y,1,axis=1)
+        return F
+    
+    def compute_constrained_transport(self, bx:np.ndarray, by:np.ndarray, flux_by_X:np.ndarray, flux_bx_Y:np.ndarray, dx:float, dt:float):
+        R = -1   
+        L = 1  
+        
+        Ez = 0.25 * ( -flux_by_X - np.roll(flux_by_X,R,axis=1) + flux_bx_Y + np.roll(flux_bx_Y,R,axis=0) )
+        dbx, dby = compute_curl_z(-Ez, dx)
+        
+        bx += dt * dbx
+        by += dt * dby
+        
+        self.Ez = Ez
+        
+        return bx, by
 
     def solve(self):
         t = 0
@@ -205,6 +284,41 @@ class Solver:
         print("# Constraint Transport Solver: Initialize Orszag-Tang vortex condition")
         self.set_init_condition()
         
+        # save figure
+        if not os.path.exists(self.save_dir):
+            os.mkdir(self.save_dir)
+        
+        self.plot_contourf(
+            self.Pt,
+            title="Initial total pressure",
+            save_path=os.path.join(self.save_dir, "pressure_init.png"),
+        )
+        
+        self.plot_contourf(
+            self.total_energy,
+            title="Initial total energy",
+            save_path=os.path.join(self.save_dir, "energy_init.png"),
+        )
+        
+        self.plot_contourf(
+            self.vx,
+            title="Initial Vx",
+            save_path=os.path.join(self.save_dir, "vx_init.png"),
+        )
+        
+        self.plot_contourf(
+            self.vy,
+            title="Initial Vy",
+            save_path=os.path.join(self.save_dir, "vy_init.png"),
+        )
+        
+        self.plot_contourf(
+            0.5*(self.Bx ** 2 + self.By ** 2),
+            title="Initial magnetic pressure",
+            save_path=os.path.join(self.save_dir, "pressure_magnetic_init.png"),
+        )
+
+        # Predictive modeling for MHD constraint tranpsort
         print(
             "# Constraint Transport Solver: Iteration for solving MHD tranport equation"
         )
@@ -212,36 +326,82 @@ class Solver:
         while t < self.t_end:
             
             # compute Alfven speed, sound speed, and fast magnetosonic speed
-            vA = self.compute_Alfven_speed(self.rho, self.Bx, self.By)
-            vS = self.compute_sound_speed(self.rho, self.Bx, self.By, self.P)
+            vA = self.compute_Alfven_speed(self.rho.clip(1e-8), self.Bx, self.By)
+            vS = self.compute_sound_speed(self.rho.clip(1e-8), self.Bx, self.By, self.P.clip(1e-8))
             vF = self.compute_fast_magnetosonic_speed(vS, vA)
             
             # update time interval
-            self.dt = self.courant_factor * np.min(
-                self.dx / (vF + np.sqrt(self.vx**2 + self.vy**2))
-            )
+            self.dt = self.courant_factor * np.min(self.dx / (vF + np.sqrt(self.vx**2 + self.vy**2)))
             
-            # update physical variables
-            rho_new, vx_new, vy_new, Bx_new, By_new, P_new = self.update_variables(self.rho, self.vx, self.vy, self.Bx, self.By, self.P, self.dt)
+            # compute gradients of variables
+            rho_dx, rho_dy = compute_gradient(self.rho, self.dx)
+            vx_dx, vx_dy = compute_gradient(self.vx, self.dx)
+            vy_dx, vy_dy = compute_gradient(self.vy, self.dx)
+            Bx_dx, Bx_dy = compute_gradient(self.Bx, self.dx)
+            By_dx, By_dy = compute_gradient(self.By, self.dx)
+            P_dx, P_dy = compute_gradient(self.P, self.dx)
             
-            self.rho = rho_new
-            self.vx = vx_new
-            self.vy = vy_new
-            self.Bx = Bx_new
-            self.By = By_new
-            self.P = P_new
-
+            if self.is_constraint_slope:
+                rho_dx, rho_dy = constraint_slope(self.rho, self.dx, rho_dx, rho_dy)
+                vx_dx, vx_dy = constraint_slope(self.vx, self.dx, vx_dx, vx_dy)
+                vy_dx, vy_dy = constraint_slope(self.vy, self.dx, vy_dx, vy_dy)
+                Bx_dx, Bx_dy = constraint_slope(self.Bx, self.dx, Bx_dx, Bx_dy)
+                By_dx, By_dy = constraint_slope(self.By, self.dx, By_dx, By_dy)
+                P_dx, P_dy = constraint_slope(self.P, self.dx, P_dx, P_dy)
+            
+            # update physical variables : corner-centered values with RK 4th order approximation
+            rho, vx, vy, Bx, By, P = self.extrapolate_half_time(self.rho, self.vx, self.vy, self.Bx, self.By, self.P, self.dt * 0.5)
+            
+            # extrapolate corner-centered frame to face-centered frame
+            rho_XL, rho_XR, rho_YL, rho_YR = extrapolate_space(self.rho, rho_dx, rho_dy, self.dx)
+            vx_XL,  vx_XR,  vx_YL,  vx_YR  = extrapolate_space(self.vx,  vx_dx,  vx_dy,  self.dx)
+            vy_XL,  vy_XR,  vy_YL,  vy_YR  = extrapolate_space(self.vy,  vy_dx,  vy_dy,  self.dx)
+            P_XL,   P_XR,   P_YL,   P_YR   = extrapolate_space(self.P,   P_dx,   P_dy,   self.dx)
+            Bx_XL,  Bx_XR,  Bx_YL,  Bx_YR  = extrapolate_space(self.Bx,  Bx_dx,  Bx_dy,  self.dx)
+            By_XL,  By_XR,  By_YL,  By_YR  = extrapolate_space(self.By,  By_dx,  By_dy,  self.dx)
+            
+            # Additional processing for avoiding numerical instability
+            rho_XL = rho_XL.clip(1e-8)
+            rho_XR = rho_XR.clip(1e-8)
+            rho_YL = rho_YL.clip(1e-8)
+            rho_YR = rho_YR.clip(1e-8)
+            
+            P_XL = P_XL.clip(1e-8)
+            P_XR = P_XR.clip(1e-8)
+            P_YL = P_YL.clip(1e-8)
+            P_YR = P_YR.clip(1e-8)
+            
+            # compute conservative flux
+            flux_m_x, flux_px_x, flux_py_x, flux_en_x, flux_by_x = self.compute_Flux(rho_XL, rho_XR, vx_XL, vx_XR, vy_XL, vy_XR, P_XL, P_XR, Bx_XL, Bx_XR, By_XL, By_XR)
+            flux_m_y, flux_py_y, flux_px_y, flux_en_y, flux_bx_y = self.compute_Flux(rho_YL, rho_YR, vy_YL, vy_YR, vx_YL, vx_YR, P_YL, P_YR, By_YL, By_YR, Bx_YL, Bx_YR)
+            
+            # update via flux
+            self.m = self.update_variables_by_flux(self.m, flux_m_x, flux_m_y, self.dx, self.dt)
+            self.px = self.update_variables_by_flux(self.px, flux_px_x, flux_px_y, self.dx, self.dt)
+            self.py = self.update_variables_by_flux(self.py, flux_py_x, flux_py_y, self.dx, self.dt)
+            self.total_energy = self.update_variables_by_flux(self.total_energy, flux_en_x, flux_en_y, self.dx, self.dt)
+            
+            bx, by = self.compute_constrained_transport(self.Bxh, self.Byh, flux_by_x, flux_bx_y, self.dx, self.dt)
+            Bx, By = compute_avg_field(bx,by)
+            
+            # update physical variables from conserved quantities
+            self.rho = self.m / self.dx ** 2
+            self.vx = self.px / self.rho
+            self.vy = self.py / self.rho
+            
+            self.Bxh = bx
+            self.Byh = by
+            self.Bx = Bx
+            self.By = By    
+            self.P = self.compute_pressure(self.rho, self.vx, self.vy, self.Bx, self.By, self.total_energy)
+            
             # update time
             t += self.dt
 
             # update macroscopic variables
-            self.Pt = self.P + 0.5 * (self.Bx**2 + self.By**2)
-            self.internal_energy = self.P / (self.gamma - 1) / self.rho
-            self.total_energy = (
-                self.internal_energy
-                + 0.5 * (self.vx**2 + self.vy**2)
-                + 0.5 * (self.Bx**2 + self.By**2) / self.rho
-            )
+            Pt = self.P + 0.5 * (self.Bx**2 + self.By**2)
+            internal_energy = self.compute_internal_energy(self.rho, self.P)
+            total_energy = self.compute_total_energy(self.rho, self.vx, self.vy, self.Bx, self.By, self.P)
 
             if count % self.verbose == 0:
                 divB = compute_div(self.Bx, self.By, self.dx)
@@ -253,7 +413,7 @@ class Solver:
 
             # update count
             count += 1
-
+            
         print("# Constraint Transport Solver: Iteration process complete")
         
         # save figure
@@ -261,19 +421,19 @@ class Solver:
             os.mkdir(self.save_dir)
         
         self.plot_contourf(
-            self.Pt,
+            Pt,
             title="Total pressure",
             save_path=os.path.join(self.save_dir, "pressure.png"),
         )
         
         self.plot_contourf(
-            self.total_energy,
+            total_energy,
             title="Total energy",
             save_path=os.path.join(self.save_dir, "energy.png"),
         )
         
         self.plot_contourf(
-            self.internal_energy,
+            internal_energy,
             title="Internal energy",
             save_path=os.path.join(self.save_dir, "energy_internal.png"),
         )
@@ -303,7 +463,8 @@ class Solver:
         )
 
     def plot_contourf(self, vector, title: str, save_path: str):
-        cbar = np.linspace(np.min(vector), np.max(vector), num=128)
+        
+        cbar = np.linspace(np.min(vector), np.max(vector), num = 64)
         plt.figure(figsize=(6, 4), dpi=160)
         plt.contourf(self.X, self.Y, vector, cbar)
         plt.xlabel("x")

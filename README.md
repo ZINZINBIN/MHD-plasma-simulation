@@ -1,5 +1,6 @@
 # MHD simulation
 ## Introduction
+This code is 2D MHD simulation of Orszag-Tang vortex with Finite Volume Method. Based on Philip Mocz' code, RK4 explicit method is additinoally applied. 
 
 ## Results
 
