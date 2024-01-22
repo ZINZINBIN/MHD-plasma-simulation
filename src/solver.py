@@ -19,6 +19,7 @@ class Solver:
         verbose: int = 50,
         save_dir: Optional[str] = "./results/",
         plot_freq :Optional[int] = 16,
+        courant_factor : Optional[float] = 0.5
     ):
         # grid configuration
         self.nx = nx
@@ -27,9 +28,14 @@ class Solver:
         self.L = L
         self.dx = L / nx
 
-        # Setting
+        # setting
         self.is_constraint_slope = is_constraint_slope
-        self.courant_factor = 0.5
+        
+        if courant_factor is None:
+            self.courant_factor = 0.1
+        else:
+            self.courant_factor = courant_factor
+            
         self.verbose = verbose
         self.save_dir = save_dir
         self.is_animated = is_animated
@@ -90,35 +96,37 @@ class Solver:
         self.Bx = Bx
         self.By = By
 
-        self.total_energy = (self.P -  0.5 * (self.Bx**2 + self.By**2)) / (self.gamma - 1) + 0.5 * (self.vx**2 + self.vy**2) * self.rho + 0.5 * (self.Bx**2 + self.By**2)
-
+        total_energy = (self.P -  0.5 * (self.Bx**2 + self.By**2)) / (self.gamma - 1) + 0.5 * (self.vx**2 + self.vy**2) * self.rho + 0.5 * (self.Bx**2 + self.By**2)
+        
+        self.total_energy = total_energy * self.dx ** 2
+        
+        self.en = total_energy 
         self.m = self.rho * self.dx ** 2
         self.px = self.rho * self.vx * self.dx ** 2
         self.py = self.rho * self.vy * self.dx ** 2
         
     def compute_Alfven_speed(self, rho, Bx, By):
-        self.vA = np.sqrt((Bx**2 + By**2) / rho)
-        return self.vA
+        vA = np.sqrt((Bx**2 + By**2) / rho)
+        return vA
 
     def compute_sound_speed(self, rho, Bx, By, P):
-        self.vS = np.sqrt(self.gamma * (P - 0.5 * (Bx ** 2 + By ** 2)) / rho)
-        return self.vS
+        vS = np.sqrt(self.gamma * (P - 0.5 * (Bx ** 2 + By ** 2)) / rho)
+        return vS
 
     def compute_fast_magnetosonic_speed(self, vS, vA):
-        self.vF = np.sqrt((vS**2 + vA**2 + np.sqrt(vS**2 + vA**2) ** 2) / 2)
-        return self.vF
+        vF = np.sqrt((vS**2 + vA**2 + np.sqrt(vS**2 + vA**2) ** 2) / 2)
+        return vF
     
     def compute_total_energy(self, rho, vx, vy, Bx, By, P):
-        self.total_energy = (P - 0.5 * (Bx ** 2 + By ** 2))/(self.gamma - 1) + 0.5 * (vx ** 2 + vy ** 2) * rho + 0.5 * (Bx ** 2 + By ** 2)
-        return self.total_energy
+        total_energy = (P - 0.5 * (Bx ** 2 + By ** 2))/(self.gamma - 1) + 0.5 * (vx ** 2 + vy ** 2) * rho + 0.5 * (Bx ** 2 + By ** 2)
+        return total_energy * self.dx ** 2
     
     def compute_thermal_pressure(self, rho, vx, vy, Bx, By, te):
-        P = te - 0.5 * (vx ** 2 + vy ** 2) * rho - 0.5 * (Bx ** 2 + By ** 2)
+        P = te / self.dx ** 2 - 0.5 * (vx ** 2 + vy ** 2) * rho - 0.5 * (Bx ** 2 + By ** 2)
         return P * (self.gamma - 1)
     
     def compute_pressure(self, rho, vx, vy, Bx, By, te):
-        P = te - 0.5 * (vx ** 2 + vy ** 2) * rho - 0.5 * (Bx ** 2 + By ** 2)
-        self.P = P * (self.gamma - 1) + 0.5 * (Bx ** 2 + By ** 2)
+        P = te / self.dx ** 2 - 0.5 * (vx ** 2 + vy ** 2) * rho - 0.5 * (Bx ** 2 + By ** 2)
         return P * (self.gamma - 1) + 0.5 * (Bx ** 2 + By ** 2)
 
     def compute_RK_partial(
@@ -145,7 +153,7 @@ class Solver:
             By_dx, By_dy = constraint_slope(By, self.dx, By_dx, By_dy)
             P_dx, P_dy = constraint_slope(P, self.dx, P_dx, P_dy)
 
-        drho = (-1) * (vx * rho_dx + vy * rho_dy + rho * vx_dx + rho * vy_dy)        
+        drho = (-1) * (vx * rho_dx + vy * rho_dy + rho * vx_dx + rho * vy_dy)
         dvx = (-1) * (
             vx * vx_dx + vy * vx_dy + P_dx / rho - 2 * 1 / rho * Bx * Bx_dx - 1 / rho * By * Bx_dy - 1 / rho * Bx * By_dy 
         )
@@ -162,7 +170,7 @@ class Solver:
         dP = (-1) * (
             self.gamma * (P-0.5*(Bx**2+By**2)) * (vx_dx + vy_dy) + By ** 2 * vx_dx + Bx ** 2 * vy_dy +
             (self.gamma - 2) * (Bx*vx + By*vy) * (Bx_dx + By_dy) + 
-            vx * P_dx + vy * P_dy - Bx*By*vx_dy - By*Bx * vy_dx
+            vx * P_dx + vy * P_dy - By*Bx*vx_dy - Bx*By * vy_dx
         )
     
         return drho, dvx, dvy, dBx, dBy, dP
@@ -208,7 +216,7 @@ class Solver:
         Bx_new = Bx + dt * (1 / 6) * (Bx_k1 + 2 * Bx_k2 + 2 * Bx_k3 + Bx_k4)
         By_new = By + dt * (1 / 6) * (By_k1 + 2 * By_k2 + 2 * By_k3 + By_k4)
         P_new = P + dt * (1 / 6) * (P_k1 + 2 * P_k2 + 2 * P_k3 + P_k4)
-        
+
         return rho_new, vx_new, vy_new, Bx_new, By_new, P_new
 
     def compute_Flux(self, rho_L, rho_R, vx_L, vx_R, vy_L, vy_R, P_L, P_R, Bx_L, Bx_R, By_L, By_R):
@@ -226,7 +234,7 @@ class Solver:
         
         # compute flux of physical quantities
         flux_m = momx_avg
-        flux_px = momx_avg ** 2 / rho_avg + P_avg + 0.5 * (Bx_avg ** 2 + By_avg ** 2) - Bx_avg ** 2
+        flux_px = momx_avg ** 2 / rho_avg + P_avg - Bx_avg ** 2
         flux_py = momx_avg * momy_avg / rho_avg - Bx_avg * By_avg
         flux_en = (en_avg + P_avg) * momx_avg / rho_avg - Bx_avg * (Bx_avg * momx_avg + By_avg * momy_avg) / rho_avg
         flux_By = (By_avg * momx_avg - Bx_avg * momy_avg) / rho_avg
@@ -263,15 +271,13 @@ class Solver:
         R = -1   
         L = 1  
     
-        Ez = 0.25 * ( -flux_by_X - np.roll(flux_by_X,R,axis=1) + flux_bx_Y + np.roll(flux_bx_Y,R,axis=0) )
+        Ez = 0.25 * (-flux_by_X - np.roll(flux_by_X,R,axis=1) + flux_bx_Y + np.roll(flux_bx_Y,R,axis=0))
         dbx, dby = compute_curl_z(-Ez, dx)
         
-        bx += dt * dbx
-        by += dt * dby
+        bx = bx + dt * dbx
+        by = by + dt * dby
         
-        self.Ez = Ez
-        
-        return bx, by
+        return Ez, bx, by
 
     def solve(self):
         t = 0
@@ -285,6 +291,12 @@ class Solver:
         # save figure
         if not os.path.exists(self.save_dir):
             os.mkdir(self.save_dir)
+            
+        self.plot_contourf(
+            self.rho,
+            title="Initial plasma density",
+            save_path=os.path.join(self.save_dir, "density_init.png"),
+        )
         
         self.plot_contourf(
             self.P,
@@ -296,6 +308,12 @@ class Solver:
             self.total_energy,
             title="Initial total energy",
             save_path=os.path.join(self.save_dir, "energy_init.png"),
+        )
+        
+        self.plot_contourf(
+            self.compute_thermal_pressure(self.rho, self.vx, self.vy, self.Bx, self.By, self.total_energy),
+            title="Initial thermal pressure",
+            save_path=os.path.join(self.save_dir, "thermal_pressure_init.png"),
         )
         
         self.plot_contourf(
@@ -332,6 +350,8 @@ class Solver:
             P_list = None
         
         while t < self.t_end:
+            
+            bx, by = self.Bxh, self.Byh
                         
             # compute Alfven speed, sound speed, and fast magnetosonic speed
             vA = self.compute_Alfven_speed(self.rho, self.Bx, self.By)
@@ -361,49 +381,54 @@ class Solver:
             rho, vx, vy, Bx, By, P = self.extrapolate_half_time(self.rho, self.vx, self.vy, self.Bx, self.By, self.P, self.dt * 0.5)
             
             # extrapolate corner-centered frame to face-centered frame
-            rho_XL, rho_XR, rho_YL, rho_YR = extrapolate_space(self.rho, self.dx, rho_dx, rho_dy)
-            vx_XL,  vx_XR,  vx_YL,  vx_YR  = extrapolate_space(self.vx,  self.dx, vx_dx,  vx_dy)
-            vy_XL,  vy_XR,  vy_YL,  vy_YR  = extrapolate_space(self.vy,  self.dx, vy_dx,  vy_dy)
-            P_XL,   P_XR,   P_YL,   P_YR   = extrapolate_space(self.P,   self.dx, P_dx,   P_dy)
-            Bx_XL,  Bx_XR,  Bx_YL,  Bx_YR  = extrapolate_space(self.Bx,  self.dx, Bx_dx,  Bx_dy)
-            By_XL,  By_XR,  By_YL,  By_YR  = extrapolate_space(self.By,  self.dx, By_dx,  By_dy)
-              
+            rho_XL, rho_XR, rho_YL, rho_YR = extrapolate_space(rho, self.dx, rho_dx, rho_dy)
+            vx_XL,  vx_XR,  vx_YL,  vx_YR  = extrapolate_space(vx,  self.dx, vx_dx,  vx_dy)
+            vy_XL,  vy_XR,  vy_YL,  vy_YR  = extrapolate_space(vy,  self.dx, vy_dx,  vy_dy)
+            P_XL,   P_XR,   P_YL,   P_YR   = extrapolate_space(P,   self.dx, P_dx,   P_dy)
+            Bx_XL,  Bx_XR,  Bx_YL,  Bx_YR  = extrapolate_space(Bx,  self.dx, Bx_dx,  Bx_dy)
+            By_XL,  By_XR,  By_YL,  By_YR  = extrapolate_space(By,  self.dx, By_dx,  By_dy)
+            
             # compute conservative flux
             flux_m_x, flux_px_x, flux_py_x, flux_en_x, flux_by_x = self.compute_Flux(rho_XL, rho_XR, vx_XL, vx_XR, vy_XL, vy_XR, P_XL, P_XR, Bx_XL, Bx_XR, By_XL, By_XR)
             flux_m_y, flux_py_y, flux_px_y, flux_en_y, flux_bx_y = self.compute_Flux(rho_YL, rho_YR, vy_YL, vy_YR, vx_YL, vx_YR, P_YL, P_YR, By_YL, By_YR, Bx_YL, Bx_YR)
             
             # update via flux
-            self.m = self.update_variables_by_flux(self.m, flux_m_x, flux_m_y, self.dx, self.dt)
-            self.px = self.update_variables_by_flux(self.px, flux_px_x, flux_px_y, self.dx, self.dt)
-            self.py = self.update_variables_by_flux(self.py, flux_py_x, flux_py_y, self.dx, self.dt)
-            self.total_energy = self.update_variables_by_flux(self.total_energy, flux_en_x, flux_en_y, self.dx, self.dt)
+            m = self.update_variables_by_flux(self.m, flux_m_x, flux_m_y, self.dx, self.dt)
+            px = self.update_variables_by_flux(self.px, flux_px_x, flux_px_y, self.dx, self.dt)
+            py = self.update_variables_by_flux(self.py, flux_py_x, flux_py_y, self.dx, self.dt)
+            total_energy = self.update_variables_by_flux(self.total_energy, flux_en_x, flux_en_y, self.dx, self.dt)
             
-            bx, by = self.compute_constrained_transport(self.Bxh, self.Byh, flux_by_x, flux_bx_y, self.dx, self.dt)
+            Ez, bx, by = self.compute_constrained_transport(bx, by, flux_by_x, flux_bx_y, self.dx, self.dt)
             Bx, By = compute_avg_field(bx,by)
+            rho = m / self.dx ** 2
+            P = self.compute_pressure(rho, px / rho, py / rho, Bx, By, total_energy)
+            thermal_P = self.compute_thermal_pressure(rho, px / rho, py / rho, Bx, By, total_energy)
             
             # update physical variables from conserved quantities
-            self.rho = self.m / self.dx ** 2
-            self.vx = self.px / self.rho
-            self.vy = self.py / self.rho
+            self.rho = rho
+            self.m = m
+            self.vx = px / rho / self.dx ** 2
+            self.vy = py / rho / self.dx ** 2
+            self.px = px
+            self.py = py
+            self.total_energy = total_energy
+            self.en = total_energy / self.dx ** 2
             
             self.Bxh = bx
             self.Byh = by
             self.Bx = Bx
             self.By = By    
-            self.P = self.compute_pressure(self.rho, self.vx, self.vy, self.Bx, self.By, self.total_energy)
+            self.P = P
+            self.Ez = Ez
             
             # update time
             t += self.dt
-
-            # update macroscopic variables
-            total_energy = self.compute_total_energy(self.rho, self.vx, self.vy, self.Bx, self.By, self.P)
-            thermal_P = self.compute_thermal_pressure(self.rho, self.vx, self.vy, self.Bx, self.By, total_energy)
             
             if count % self.verbose == 0:
                 divB = compute_div(self.Bx, self.By, self.dx)
                 print(
-                    "(Solver) t = {:.3f} | mean divB = {:.3f} | mean E = {:.3f} | mean P = {:.3f} | mean rho = {:.3f}".format(
-                        t, np.mean(np.abs(divB)), np.mean(self.total_energy), np.mean(thermal_P), np.mean(self.rho)
+                    "(Solver) t = {:.3f} | mean divB = {:.3f} | mean En = {:.3f} | mean P = {:.3f} | mean rho = {:.3f}".format(
+                        t, np.mean(np.abs(divB)), np.mean(self.en), np.mean(thermal_P), np.mean(self.rho)
                     )
                 )
 
@@ -463,17 +488,23 @@ class Solver:
             title="Magnetic pressure",
             save_path=os.path.join(self.save_dir, "pressure_magnetic.png"),
         )
+        
+        self.plot_contourf(
+            self.Ez,
+            title="Ez",
+            save_path=os.path.join(self.save_dir, "Ez.png"),
+        )
 
         if self.is_animated:
             print("# Generate animation file")
-            fig, ax = plt.subplots(1,1,figsize = (6,4), facecolor = 'white', dpi=160)
+            fig, ax = plt.subplots(1,1,figsize = (8,6), facecolor = 'white', dpi=160)
+            ax.cla()
             
-            def _plot(idx : int, ax:Axes, data_list):
-                ax.cla()
+            def _plot(idx : int, ax:Axes, data_list:List):
                 
                 data = data_list[idx]
-                cbar = np.linspace(0.01, 0.5, num = 128)
-                ax.contourf(self.X,self.Y, data, cbar)
+                ax.imshow(data, cmap='jet')
+                ax.set_clim(0.06, 0.5)
                 ax.set_xlabel("x")
                 ax.set_ylabel("y")
             
@@ -487,12 +518,18 @@ class Solver:
 
     def plot_contourf(self, vector, title: str, save_path: str):
         
-        cbar = np.linspace(np.min(vector), np.max(vector), num = 64)
-        plt.figure(figsize=(6, 4), dpi=160)
-        plt.contourf(self.X, self.Y, vector, cbar)
+        # draw as an image
+        plt.figure(figsize=(4, 4), dpi=160)
+        plt.imshow(vector.T, cmap = 'jet')
+        
+        # draw as a contour plot
+        # cbar = np.linspace(np.min(vector), np.max(vector), num = 64)
+        # plt.figure(figsize=(6, 4), dpi=160)
+        # plt.contourf(self.X, self.Y, vector, cbar)
+        
         plt.xlabel("x")
         plt.ylabel("y")
-        plt.colorbar()
+        # plt.colorbar()
         plt.title(title)
         plt.tight_layout()
         plt.savefig(save_path, dpi=160)

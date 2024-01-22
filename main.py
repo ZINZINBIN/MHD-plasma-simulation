@@ -7,6 +7,7 @@ def parsing():
     parser.add_argument("--t_srt", type=float, default=0)
     parser.add_argument("--t_end", type=float, default=0.5)
     parser.add_argument("--L", type=float, default=1.0)
+    parser.add_argument("--courant_factor", type=float, default=0.4)
     parser.add_argument("--use_constraint_slope", type=bool, default=True)
     parser.add_argument("--use_animation", type=bool, default=False)
     parser.add_argument("--verbose", type=int, default=16)
@@ -29,6 +30,7 @@ if __name__ == "__main__":
         verbose = args['verbose'],
         save_dir = args['save_dir'],
         plot_freq = args['plot_freq'],
+        courant_factor = args['courant_factor'],
     )
     
     solver.solve()
