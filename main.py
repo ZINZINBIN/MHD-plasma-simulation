@@ -3,7 +3,7 @@ from src.solver import Solver
 
 def parsing():
     parser = argparse.ArgumentParser(description="MHD simulation code: Constraint transport case")
-    parser.add_argument("--num_mesh", type=int, default=128)
+    parser.add_argument("--num_mesh", type=int, default=200)
     parser.add_argument("--t_srt", type=float, default=0)
     parser.add_argument("--t_end", type=float, default=0.5)
     parser.add_argument("--L", type=float, default=1.0)

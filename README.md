@@ -3,10 +3,19 @@
 This is a github repository for 2-dimensional Magnetohydrodynamic (MHD) simulation for Orszag-Tang vortex. The Orszag-Tang vortex is a supersonic 2D MHD turbulence model problem and is given by the initial condition $B = -sin(y) \hat{x} + sin(2x) \hat{y}$ and $v = -sin(y) \hat{x} + sin(x) \hat{y}$. This condition evolves into highly nonlinear turbulence in 2-dimensional systems. This code simulates the evolution of the MHD turbulence with <a href = "https://en.wikipedia.org/wiki/Finite_volume_method">Finite Volume method </a>. The time integration utilized in this code is <a href = "https://en.wikipedia.org/wiki/Runge%E2%80%93Kutta_methods">explicit Runge-Kunta 4th order method</a>. 
 
 ## Simulation
+The below figure represents the simluation result of MHD turbulence. 
 <div>
     <p float = 'left'>
         <img src="./results/density.png"  width="45%">
         <img src="./results/energy.png"  width="45%">
+    </p>
+</div>
+
+The energy with respect to time given as below figure shows the energy dissipation.
+
+<div>
+    <p float = 'left'>
+        <img src="./results/energy_dissipation.png"  width="60%">
     </p>
 </div>
 
